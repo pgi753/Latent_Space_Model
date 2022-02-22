@@ -129,12 +129,6 @@ class WorldModel(nn.Module):
             loss += current_bf[n] * torch.log(current_bf[n]/transition)
         return loss
 
-    def _reward_loss_term(self):
-        loss = torch.tensor(0, dtype=torch.float32).to(self._device)
-        for n in range(self._category_size):
-            reward = self.RewardModel(self._one_hot_state[n])
-        return loss
-
 
 def main():
     # load config file
