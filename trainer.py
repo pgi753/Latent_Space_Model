@@ -43,7 +43,7 @@ class Trainer:
         self._set_model()
 
     def _set_model(self):
-        path = str(Path(__file__).parent.resolve() / 'models') + '\model.pt'
+        path = str(Path(__file__).parent.resolve() / 'saved') + '\model.pt'
         if Path(path).exists():
             self._pomdp.load_model()
         else:
@@ -90,11 +90,11 @@ class Trainer:
                 print(f"{step}/{num_step}  ", f"Model loss: {model_loss.item():.6f} ",
                       f"KLD loss: {kld_loss.item():.6f} ", f"Observation loss: {observ_loss.item():.6f} ",
                       f"Reward loss: {reward_loss.item():.6f} ")
+
         # imagine test
         o, a, r = self._pomdp.imagine_test(rnn_hidden, self._horizon)
         print(f"imagine test \nobserv:{o[0]} \naction:{a[0]} \nreward:{r[0]}")
         # self._pomdp.save_model()
-
 
         # Behavior learning
         for step in range(1, (num_step + 1)):
@@ -151,7 +151,7 @@ if __name__ == '__main__':
     obs, rew, act = trainer.step(1000)
     trainer.add_to_buffer(obs, act, rew)
 
-    train_steps = 10000
+    train_steps = 100
     for iter in range(train_steps):
         print(f"-------------------train_step: {iter}-------------------")
         # train Dynamics and Behavior
@@ -164,7 +164,6 @@ if __name__ == '__main__':
         print(f"observ : {np.argmax(obs, axis= -1)}")
         print(f"action : {np.argmax(act, axis= -1)}")
         trainer.add_to_buffer(obs, act, rew)
-
 
 
 

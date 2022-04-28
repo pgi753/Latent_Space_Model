@@ -292,11 +292,11 @@ class POMDPModel:
             # "Actor": self._actor.state_dict(),
             # "ValueModel": self._value_model.state_dict()
         }
-        path = str(Path(__file__).parent.resolve() / 'models') + '\model.pt'
+        path = str(Path(__file__).parent.resolve() / 'saved') + '\model.pt'
         torch.save(save_dict, path)
 
     def load_model(self):
-        path = str(Path(__file__).parent.resolve() / 'models') + '\model.pt'
+        path = str(Path(__file__).parent.resolve() / 'saved') + '\model.pt'
         saved_dict = torch.load(path, map_location=self._device)
         self._rnn.load_state_dict(saved_dict["RNN"])
         self._rnn_hidden_to_belief_vector.load_state_dict(saved_dict["BeliefVector"])

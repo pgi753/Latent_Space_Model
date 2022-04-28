@@ -1,5 +1,7 @@
 import random
 import numpy as np
+from visualization import Visualization
+from pathlib import Path
 
 
 class Simulator:
@@ -7,6 +9,9 @@ class Simulator:
         self._fixed = pattern_fixed
         self._max_period = max_period
         self._cycle_range = cycle_range
+        path = Path(__file__).parent.resolve() / 'video' / 'output.mp4'
+        self._visualization = Visualization(video_file_path=path, freq_channel_list=[0],
+                                            network_operator_list=['agent', 'user1'])
         random.seed(seed)
         self._set_pattern()
         self._ch_state = 0
@@ -39,6 +44,12 @@ class Simulator:
             reward = -2.0 if self._ch_state == 0 else 1.0
         else:              # packet sent
             reward = 3.0 if self._ch_state == 0 else -4.0
+
+        log = {'channel info': {'agent':{'freq channel': [0], 'packet': np.argmax(action)},
+                                'user1':{'freq channel': [0], 'packet': self._ch_state}},
+               'reward': reward}
+        self._visualization(log)
+
         # pattern change
         if not self._fixed and self._cycles <= 0:
             self._set_pattern()
