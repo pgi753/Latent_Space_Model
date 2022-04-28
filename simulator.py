@@ -20,8 +20,11 @@ class Simulator:
                 break
         self._pattern = [0] * empty + [1] * using       # [0]=empty, [1]=using
         self._period = len(self._pattern)
-        self._cycle = random.randint(self._cycle_range[0], self._cycle_range[1])
-        print(f"pattern: {empty, using}, len:{self._period}, cycle: {self._cycle}, total: {self._period*self._cycle}")
+        self._cycles = random.randint(self._cycle_range[0], self._cycle_range[1])
+        if self._fixed:
+            print(f"pattern: {empty, using}, period: {self._period}, pattern fixed")
+        else:
+            print(f"pattern: {empty, using}, period: {self._period}, cycles: {self._cycles}, total: {self._period*self._cycles}")
 
     def step(self, action):
         # observation
@@ -30,14 +33,14 @@ class Simulator:
         self._pointer += 1
         if self._pointer >= self._period:
             self._pointer = 0
-            self._cycle -= 1
+            self._cycles -= 1
         # reward
         if action[0]:  # packet not sent    [1, 0]
-            reward = -2.0 if self._ch_state == 0 else 0.0
+            reward = -2.0 if self._ch_state == 0 else 1.0
         else:              # packet sent
-            reward = 1.0 if self._ch_state == 0 else -4.0
+            reward = 3.0 if self._ch_state == 0 else -4.0
         # pattern change
-        if not self._fixed and self._cycle <= 0:
+        if not self._fixed and self._cycles <= 0:
             self._set_pattern()
         return obs, reward
 
