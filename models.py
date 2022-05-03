@@ -164,8 +164,7 @@ class POMDPModel:
             imag_state, belief_vector, policy_entropy, imag_log_prob = self.rollout_imagination(horizon, rnn_hidden)
             imag_reward_dist = self._reward_model(imag_state[:-1])                      # predict reward    t = 0,...,H-1
             imag_reward = imag_reward_dist.mean                                         # mean or sample
-            imag_value_dist = self._target_value_model(imag_state, belief_vector)       # predict value
-            imag_value = imag_value_dist.mean
+            imag_value = self._target_value_model(imag_state, belief_vector)            # predict value
             discount_arr = self._discount * torch.ones_like(imag_reward)
 
         # value estimation
@@ -199,9 +198,8 @@ class POMDPModel:
         value_bv = belief_vector[:-1].detach()
         value_target = lambda_returns.detach()
 
-        value_dist = self._value_model(value_state, value_bv)
-        value_loss = -torch.mean(value_dist.log_prob(value_target))
-        # value_loss = torch.mean((value_dist.mean-value_target)**2)
+        value = self._value_model(value_state, value_bv)
+        value_loss = torch.mean(((value-value_target)**2)/2)
         return value_loss
 
     def rollout_imagination(self, horizon, rnn_hidden):
@@ -289,8 +287,8 @@ class POMDPModel:
             "TransitionMatrix": self._transition_matrix.state_dict(),
             "ObservDecoder": self._observ_decoder.state_dict(),
             "RewardModel": self._reward_model.state_dict(),
-            # "Actor": self._actor.state_dict(),
-            # "ValueModel": self._value_model.state_dict()
+            "Actor": self._actor.state_dict(),
+            "ValueModel": self._value_model.state_dict()
         }
         path = str(Path(__file__).parent.resolve() / 'saved') + '\model.pt'
         torch.save(save_dict, path)
@@ -304,8 +302,8 @@ class POMDPModel:
         self._transition_matrix.load_state_dict(saved_dict["TransitionMatrix"])
         self._observ_decoder.load_state_dict(saved_dict["ObservDecoder"])
         self._reward_model.load_state_dict(saved_dict["RewardModel"])
-        # self._actor.load_state_dict(saved_dict["Actor"])
-        # self._value_model.load_state_dict(saved_dict["ValueModel"])
+        self._actor.load_state_dict(saved_dict["Actor"])
+        self._value_model.load_state_dict(saved_dict["ValueModel"])
 
 
 class BeliefVector(nn.Module):
@@ -418,11 +416,9 @@ class ValueModel(nn.Module):
                           num_hidden_layers=1, hidden_size=(state_cls_size * state_cat_size * 2))
 
     def forward(self, state, belief_vector):
-        input = torch.cat((state, belief_vector), dim=-1)
-        mean = torch.squeeze(self._model(input), dim=-1)
-        dist = td.Normal(mean, 1)
-        dist = td.independent.Independent(dist, reinterpreted_batch_ndims=0)
-        return dist
+        x = torch.cat((state, belief_vector), dim=-1)
+        y = torch.squeeze(self._model(x), dim=-1)
+        return y
 
 
 class MLP(nn.Module):
