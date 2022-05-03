@@ -63,7 +63,12 @@ class RadioTime:
 
     def send_packet(self, network_operator: str, freq_channel: int):
         ind = self._freq_channel_list.index(freq_channel)
-        self._current_occupancy[network_operator][0: 2, 4*ind: 4*(ind+1)] = self._cell_unit
+        # self._current_occupancy[network_operator][0: 2, 4 * ind: 4 * (ind + 1)] = self._cell_unit
+
+        if network_operator == 'agent':
+            self._current_occupancy[network_operator][0: 2, 4*ind: 4*(ind+1)] = self._cell_unit * 1.2
+        else:
+            self._current_occupancy[network_operator][0: 2, 4*ind: 4*(ind+1)] = self._cell_unit
 
     def receive_packet(self, network_operator: str, freq_channel: int):
         ind = self._freq_channel_list.index(freq_channel)
@@ -98,7 +103,8 @@ class Visualization:
     def __call__(self, log):
         self._times += 1
         self._rewards += log['reward']
-        self._time_text.SetText(2, f' Times: {self._times}\n Rewards: {self._rewards}')
+        pattern = log['pattern']
+        self._time_text.SetText(2, f' Times: {self._times}\n Rewards: {self._rewards}\n Pattern: {pattern}')
         ch_info = log['channel info']
         for network_operator in ch_info:
             freq_channel_list = ch_info[network_operator]['freq channel']
@@ -108,7 +114,6 @@ class Visualization:
                     self._radio_time.receive_packet(network_operator, freq_channel)
                 elif packet == 1:
                     self._radio_time.send_packet(network_operator, freq_channel)
-
         self._radio_time.update()
         self._plotter.render()
         self._plotter.write_frame()
