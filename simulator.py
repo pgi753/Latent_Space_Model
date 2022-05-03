@@ -16,6 +16,7 @@ class Simulator:
         self._set_pattern()
         self._ch_state = 0
         self._pointer = 0
+        self._log ={}
 
     def _set_pattern(self):
         while True:
@@ -45,10 +46,11 @@ class Simulator:
         else:              # packet sent
             reward = 3.0 if self._ch_state == 0 else -4.0
 
-        log = {'channel info': {'agent':{'freq channel': [0], 'packet': np.argmax(action)},
-                                'user1':{'freq channel': [0], 'packet': self._ch_state}},
-               'reward': reward}
-        self._visualization(log)
+        self._log = {'channel info': {'agent':{'freq channel': [0], 'packet': np.argmax(action)},
+                                      'user1':{'freq channel': [0], 'packet': self._ch_state}},
+                     'reward': reward,
+                     'pattern': (self._pattern.count(0), self._pattern.count(1))}
+        self._visualization(self._log)
 
         # pattern change
         if not self._fixed and self._cycles <= 0:
