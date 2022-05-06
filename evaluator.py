@@ -30,12 +30,14 @@ class Evaluator:
         else:
             self._device = torch.device('cpu')
 
-        self._simulator = Simulator(pattern_fixed=False, max_period = 20, cycle_range = (50, 150), seed = 123)
+        self._video_path = Path(__file__).parent.resolve() / 'Results' / 'test_result.mp4'
+        self._simulator = Simulator(path=self._video_path, pattern_fixed=False, pomdp=True, max_period = 20, cycle_range = (50, 150), seed = 123)
+        self._model_path = str(Path(__file__).parent.resolve() / 'SavedModels') + '\model.pt'
         self._pomdp = POMDPModel(self._state_cls_size, self._state_cat_size, self._action_shape, self._observ_shape,
                                  self._rnn_input_size, self._rnn_hidden_size, self._device,
                                  self._wm_lr, self._actor_lr, self._value_lr, self._lambda, self._actor_entropy_scale,
                                  self._discount)
-        self._pomdp.load_model()
+        self._pomdp.load_model(self._model_path)
 
     def step(self, num_steps = 1):
         action = self._pomdp.prev_action

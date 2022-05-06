@@ -33,21 +33,21 @@ class Trainer:
             self._device = torch.device('cuda')
         else:
             self._device = torch.device('cpu')
-
-        self._simulator = Simulator(pattern_fixed=True, max_period = 20, cycle_range = (500, 1000), seed = 0)
+        self._buffer = Buffer(1000000, self._observ_shape, self._action_shape, self._seq_len, self._batch_size)
+        self._video_path = Path(__file__).parent.resolve() / 'Results' / 'train_result.mp4'
+        self._simulator = Simulator(path=self._video_path, pattern_fixed=False, pomdp=True, max_period = 20, cycle_range = (50, 150), seed = 1)
+        self._model_path = str(Path(__file__).parent.resolve() / 'SavedModels') + '\model.pt'
         self._pomdp = POMDPModel(self._state_cls_size, self._state_cat_size, self._action_shape, self._observ_shape,
                                  self._rnn_input_size, self._rnn_hidden_size, self._device,
                                  self._wm_lr, self._actor_lr, self._value_lr, self._lambda, self._actor_entropy_scale,
                                  self._discount)
-        self._buffer = Buffer(1000000, self._observ_shape, self._action_shape, self._seq_len, self._batch_size)
         self._set_model()
 
     def _set_model(self):
-        path = str(Path(__file__).parent.resolve() / 'saved') + '\model.pt'
-        if Path(path).exists():
-            self._pomdp.load_model()
+        if Path(self._model_path).exists():
+            self._pomdp.load_model(self._model_path)
         else:
-            self._pomdp.save_model()
+            self._pomdp.save_model(self._model_path)
 
     def add_to_buffer(self, observ, action, reward):
         self._buffer.add(observ, action, reward)
@@ -83,7 +83,7 @@ class Trainer:
 
             self._pomdp.world_model_optimizer.zero_grad()
             model_loss.backward()
-            # torch.nn.utils.clip_grad_norm_(self._pomdp.world_model_parameters, max_norm=0.1)
+            torch.nn.utils.clip_grad_norm_(self._pomdp.world_model_parameters, max_norm=0.1)
             self._pomdp.world_model_optimizer.step()
 
             if step % 10 == 0:
@@ -94,7 +94,7 @@ class Trainer:
         # imagine test
         o, a, r = self._pomdp.imagine_test(rnn_hidden, self._horizon)
         print(f"imagine test \nobserv:{o[0]} \naction:{a[0]} \nreward:{r[0]}")
-        # self._pomdp.save_model()
+        self._pomdp.save_model(self._model_path)
 
         # Behavior learning
         for step in range(1, (num_step + 1)):
@@ -104,8 +104,8 @@ class Trainer:
             self._pomdp.value_model_optimizer.zero_grad()
             actor_loss.backward()
             value_loss.backward()
-            # torch.nn.utils.clip_grad_norm_(self._pomdp.actor_parameters, 1)
-            # torch.nn.utils.clip_grad_norm_(self._pomdp.value_model_parameters, 0.1)
+            torch.nn.utils.clip_grad_norm_(self._pomdp.actor_parameters, 1)
+            torch.nn.utils.clip_grad_norm_(self._pomdp.value_model_parameters, 0.1)
             self._pomdp.actor_optimizer.step()
             self._pomdp.value_model_optimizer.step()
 
@@ -133,10 +133,10 @@ if __name__ == '__main__':
     parser.add_argument('--rnn_input_size', type=int, default=8, help='RNN input size')
     parser.add_argument('--rnn_hidden_size', type=int, default=64, help='RNN hidden size')
     parser.add_argument('--wm_lr', type=float, default=0.003, help='World model Learning rate')
-    parser.add_argument('--actor_lr', type=float, default=0.0001, help='Action model Learning rate')
+    parser.add_argument('--actor_lr', type=float, default=0.00005, help='Action model Learning rate')
     parser.add_argument('--value_lr', type=float, default=0.0005, help='Value model Learning rate')
     parser.add_argument('--horizon', type=int, default=100, help='Horizon length')
-    parser.add_argument('--lambda_', type=float, default=0.8, help='TD lambda')
+    parser.add_argument('--lambda_', type=float, default=0.9, help='TD lambda')
     parser.add_argument('--actor_entropy_scale', type=float, default=0.001, help='Actor entropy scale')
     parser.add_argument('--value_mix_rate', type=float, default=1, help='Update value model mix rate, range: 0 ~ 1')
     parser.add_argument('--update_interval', type=int, default=10, help='Value model slow update')
@@ -148,18 +148,18 @@ if __name__ == '__main__':
     trainer.reset()
 
     # collect episode
-    obs, rew, act = trainer.step(1000)
+    obs, rew, act = trainer.step(5000)
     trainer.add_to_buffer(obs, act, rew)
 
-    train_steps = 100
+    train_steps = 10000
     for iter in range(train_steps):
         print(f"-------------------train_step: {iter}-------------------")
         # train Dynamics and Behavior
         observ, action, reward = trainer.sample_buffer()
-        trainer.train(observ, action, reward, 500)
+        trainer.train(observ, action, reward, 1000)
 
         # environment interaction
-        obs, rew, act = trainer.step(40)
+        obs, rew, act = trainer.step(1000)
         print(f"environment interaction")
         print(f"observ : {np.argmax(obs, axis= -1)}")
         print(f"action : {np.argmax(act, axis= -1)}")
