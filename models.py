@@ -279,7 +279,7 @@ class POMDPModel:
             r = np.transpose(r)
         return o, a, r
 
-    def save_model(self):
+    def save_model(self, path):
         save_dict = {
             "RNN": self._rnn.state_dict(),
             "BeliefVector": self._rnn_hidden_to_belief_vector.state_dict(),
@@ -290,11 +290,9 @@ class POMDPModel:
             "Actor": self._actor.state_dict(),
             "ValueModel": self._value_model.state_dict()
         }
-        path = str(Path(__file__).parent.resolve() / 'saved') + '\model.pt'
         torch.save(save_dict, path)
 
-    def load_model(self):
-        path = str(Path(__file__).parent.resolve() / 'saved') + '\model.pt'
+    def load_model(self, path):
         saved_dict = torch.load(path, map_location=self._device)
         self._rnn.load_state_dict(saved_dict["RNN"])
         self._rnn_hidden_to_belief_vector.load_state_dict(saved_dict["BeliefVector"])
