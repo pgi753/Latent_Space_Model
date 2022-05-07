@@ -7,7 +7,6 @@ import torch.distributions as td
 import torch.optim as optim
 
 from utility import get_parameters, FreezeParameters
-from pathlib import Path
 
 
 class POMDPModel:
@@ -188,9 +187,8 @@ class POMDPModel:
     def actor_loss(self, lambda_returns, imag_value, imag_log_prob, policy_entropy):
         advantage = (lambda_returns - imag_value[:-1]).detach()
         objective = imag_log_prob * advantage
-
-        # actor_loss = -torch.mean(objective + self._actor_entropy_scale * policy_entropy, dim=1)
-        actor_loss = -torch.mean(objective)
+        # actor_loss = -torch.mean(torch.sum(objective + self._actor_entropy_scale * policy_entropy, dim=1))
+        actor_loss = -torch.mean(objective + self._actor_entropy_scale * policy_entropy)
         return actor_loss
 
     def value_loss(self, imag_state, belief_vector, lambda_returns):
@@ -199,7 +197,8 @@ class POMDPModel:
         value_target = lambda_returns.detach()
 
         value = self._value_model(value_state, value_bv)
-        value_loss = torch.mean(((value-value_target)**2)/2)
+        # value_loss = torch.mean(torch.sum(((value - value_target) ** 2) / 2, dim=1))
+        value_loss = torch.mean(((value - value_target) ** 2) / 2)
         return value_loss
 
     def rollout_imagination(self, horizon, rnn_hidden):

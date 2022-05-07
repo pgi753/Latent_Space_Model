@@ -4,7 +4,7 @@ from visualization import Visualization
 
 
 class Simulator:
-    def __init__(self,  path: str, pattern_fixed: bool = False, pomdp: bool = False, max_period: int = 20,
+    def __init__(self, path: str, pattern_fixed: bool = False, pomdp: bool = False, max_period: int = 20,
                  cycle_range: tuple = (500, 1000), seed: int = 0):
         self._pattern_fixed = pattern_fixed
         self._pomdp_mode = pomdp
@@ -58,6 +58,7 @@ class Simulator:
                      'reward': reward,
                      'pattern': (self._empty, self._using)}
         self._visualization(self._log)
+
         # pattern change
         if not self._pattern_fixed and self._cycles <= 0:
             self._set_pattern()
