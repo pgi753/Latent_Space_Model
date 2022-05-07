@@ -11,6 +11,7 @@ class RadioTime:
         self._freq_channel_list: Optional[List[int]] = None
         self._network_operator_list: Optional[List[str]] = None
         self._time_domain_occupancy: Optional[Dict[str, np.ndarray]] = None
+        self._collision = []
         self._num_time_step = num_time_step
         self._grid_x: Dict[str, np.ndarray] = {}
         self._grid_y: Dict[str, np.ndarray] = {}
@@ -29,8 +30,9 @@ class RadioTime:
         self._freq_channel_list = freq_channel_list
 
     def set_network_operator_list(self, network_operator_list: List[str]):
-        self._network_operator_list = network_operator_list
+        self._network_operator_list = ['collision'] +  network_operator_list
         freq_channel_num = len(self._freq_channel_list)
+        self._collision = [0] * freq_channel_num
         occupancy = np.zeros((2, 4 * freq_channel_num))
         self._current_occupancy = {network_operator: occupancy.copy() for network_operator in self._network_operator_list}
         time_occupancy = np.zeros((2 * self._num_time_step, 4 * freq_channel_num))
@@ -63,12 +65,15 @@ class RadioTime:
 
     def send_packet(self, network_operator: str, freq_channel: int):
         ind = self._freq_channel_list.index(freq_channel)
-        # self._current_occupancy[network_operator][0: 2, 4 * ind: 4 * (ind + 1)] = self._cell_unit
+        self._current_occupancy[network_operator][0: 2, 4 * ind: 4 * (ind + 1)] = self._cell_unit
 
         if network_operator == 'agent':
-            self._current_occupancy[network_operator][0: 2, 4*ind: 4*(ind+1)] = self._cell_unit * 1.2
+            self._collision[ind] = 1
         else:
-            self._current_occupancy[network_operator][0: 2, 4*ind: 4*(ind+1)] = self._cell_unit
+            if self._collision[ind] == 1:
+                for network_operator in self._network_operator_list:
+                    self._current_occupancy[network_operator][0: 2, 4 * ind: 4 * (ind + 1)] = np.array([[0, 0, 0, 0], [0, 0, 0, 0]])
+                self._current_occupancy['collision'][0: 2, 4 * ind: 4 * (ind + 1)] = self._cell_unit
 
     def receive_packet(self, network_operator: str, freq_channel: int):
         ind = self._freq_channel_list.index(freq_channel)
@@ -83,6 +88,7 @@ class RadioTime:
                                       self._grid_y[network_operator].flatten(order='F'),
                                       time_occupancy.flatten(order='F')))
             self._mesh_dict[network_operator].points = points
+        self._collision = [0] * len(self._freq_channel_list)
 
 
 class Visualization:

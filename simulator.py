@@ -53,7 +53,8 @@ class Simulator:
         else:              # packet sent
             reward = 3.0 if self._ch_state == 0 else -4.0
 
-        self._log = {'channel info': {'agent':{'freq channel': [0], 'packet': np.argmax(action)},
+        self._log = {'channel info': {'collision': {'freq channel': [0], 'packet': 0},
+                                      'agent':{'freq channel': [0], 'packet': np.argmax(action)},
                                       'user1':{'freq channel': [0], 'packet': self._ch_state}},
                      'reward': reward,
                      'pattern': (self._empty, self._using)}
