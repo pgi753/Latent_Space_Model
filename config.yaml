@@ -1,0 +1,43 @@
+env:
+  env_name: Simulator
+  rendering: True
+  pattern_fixed: True
+  pomdp_mode: False
+  max_period: 20
+  cycle_range: {s: 50, e: 150}
+  seed: 0
+  p: 0.7
+  q: 0.8
+
+pomdp_model:
+  device: 'cuda'
+  state_cls_size: 1
+  state_cat_size: 64
+  action_size: 2
+  observ_size: 2
+  rnn_input_size: 8
+  rnn_hidden_size: 64
+  seq_len: 400
+  batch_size: 60
+  horizon: 100
+  wm_lr: 0.003
+  actor_lr: 0.00001
+  value_lr: 0.0005
+  lambda: 0.9
+  actor_entropy_scale: 0.001
+  discount: 0.99
+  kld_scale: 1
+  value_mix_rate: 1
+  update_interval: 10
+
+files:
+  model_name: model.pt
+  video_name: video.mp4
+  metrics_name: metrics.csv
+  result_name: result.csv
+
+
+
+
+
+
