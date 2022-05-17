@@ -5,13 +5,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as td
 import torch.optim as optim
-
 from utility import get_parameters, FreezeParameters
 
 
 class POMDPModel:
     def __init__(self, state_cls_size, state_cat_size, action_shape, observ_shape, rnn_input_size, rnn_hidden_size,
-                 device, wm_lr, actor_lr, value_lr, _lambda, actor_entropy_scale, discount):
+                 device, wm_lr, actor_lr, value_lr, _lambda, actor_entropy_scale, discount, kld_scale):
         self._state_cls_size = state_cls_size
         self._state_cat_size = state_cat_size
         self._action_shape = action_shape
@@ -25,6 +24,7 @@ class POMDPModel:
         self._lambda = _lambda
         self._actor_entropy_scale = actor_entropy_scale
         self._discount = discount
+        self._kld_scale = kld_scale
         self._rnn = nn.GRU(input_size=rnn_input_size, hidden_size=rnn_hidden_size, num_layers=1).to(device)
         self._rnn_hidden_to_belief_vector = BeliefVector(rnn_hidden_size=rnn_hidden_size, state_cls_size=state_cls_size,
                                                          state_cat_size=state_cat_size).to(device)
@@ -41,8 +41,6 @@ class POMDPModel:
         self._target_value_model.load_state_dict(self._value_model.state_dict())
         self._prev_rnn_hidden = torch.zeros((1, 1, rnn_hidden_size), dtype=torch.float32).to(device).detach()
         self._prev_action = torch.zeros(action_shape, dtype=torch.float32).to(device).detach()
-        self._test_prev_rnn_hidden = torch.zeros((1, 1, rnn_hidden_size), dtype=torch.float32).to(device).detach()
-        self._test_prev_action = torch.zeros(action_shape, dtype=torch.float32).to(device).detach()
         self._world_model_modules = [self._rnn, self._rnn_hidden_to_belief_vector, self._action_observ_to_rnn_input,
                                self._transition_matrix, self._observ_decoder, self._reward_model]
         self._world_model_optimizer = optim.Adam(get_parameters(self._world_model_modules), lr=self._wm_lr)
@@ -99,24 +97,6 @@ class POMDPModel:
             self._prev_rnn_hidden = rnn_hidden
         return action.cpu().numpy().astype(dtype=np.int32)
 
-    @property
-    def test_prev_action(self):
-        return self._test_prev_action.cpu().numpy().astype(dtype=np.int32)
-
-    def test_step(self, observ):
-        with torch.no_grad():
-            observ = torch.tensor(observ, dtype=torch.float32).to(self._device)
-            rnn_input = self._action_observ_to_rnn_input(self._test_prev_action, observ)
-            rnn_input = torch.unsqueeze(torch.unsqueeze(rnn_input, 0), 0)
-            rnn_output, rnn_hidden = self._rnn(rnn_input, self._test_prev_rnn_hidden)
-            bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_hidden[0, 0, :])
-            action_logit, action_prob, action_dist = self._actor(bv_prob)
-            action = F.one_hot(action_dist.sample(), num_classes=self._action_shape[-1])
-            action = action.type(dtype=torch.float32)
-            self._test_prev_action = action
-            self._test_prev_rnn_hidden = rnn_hidden
-        return action.cpu().numpy().astype(dtype=np.int32)
-
     def update_target_value(self, mix_rate):
         for param, target_param in zip(self._value_model.parameters(), self._target_value_model.parameters()):
             target_param.data.copy_(mix_rate * param.data + (1 - mix_rate) * target_param.data)
@@ -140,7 +120,7 @@ class POMDPModel:
         kld_loss = self.kld_loss(prior, posterior)
         obs_loss = self.observ_loss(observ, posterior)
         reward_loss = self.reward_loss(reward, posterior)
-        model_loss = kld_loss * 7 + obs_loss + reward_loss
+        model_loss = (kld_loss * self._kld_scale) + obs_loss + reward_loss
         return rnn_hidden.detach(), kld_loss.detach(), obs_loss.detach(), model_loss, reward_loss.detach()
 
     def kld_loss(self, prior, posterior):
