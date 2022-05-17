@@ -9,9 +9,10 @@ class RadioTime:
                  cell_freq_size: float = 40, cell_height: float = 50, freq_separation: float = 20):
         self._current_occupancy: Dict[str, np.ndarray] = {}
         self._freq_channel_list: Optional[List[int]] = None
+        self._freq_channel_num: int = 0
         self._network_operator_list: Optional[List[str]] = None
         self._time_domain_occupancy: Optional[Dict[str, np.ndarray]] = None
-        self._collision = []
+
         self._num_time_step = num_time_step
         self._grid_x: Dict[str, np.ndarray] = {}
         self._grid_y: Dict[str, np.ndarray] = {}
@@ -31,11 +32,11 @@ class RadioTime:
 
     def set_network_operator_list(self, network_operator_list: List[str]):
         self._network_operator_list = ['collision'] +  network_operator_list
-        freq_channel_num = len(self._freq_channel_list)
-        self._collision = [0] * freq_channel_num
-        occupancy = np.zeros((2, 4 * freq_channel_num))
+        self._freq_channel_num = len(self._freq_channel_list)
+        self._collision = [0] * self._freq_channel_num
+        occupancy = np.zeros((2, 4 * self._freq_channel_num))
         self._current_occupancy = {network_operator: occupancy.copy() for network_operator in self._network_operator_list}
-        time_occupancy = np.zeros((2 * self._num_time_step, 4 * freq_channel_num))
+        time_occupancy = np.zeros((2 * self._num_time_step, 4 * self._freq_channel_num))
         self._time_domain_occupancy = {network_operator: time_occupancy.copy() for network_operator in self._network_operator_list}
 
         # make floor
@@ -45,7 +46,7 @@ class RadioTime:
             self._grid_x[network_operator] = np.zeros_like(time_occupancy)
             self._grid_y[network_operator] = np.zeros_like(time_occupancy)
             for time in range(self._num_time_step):
-                for freq in range(freq_channel_num):
+                for freq in range(self._freq_channel_num):
                     self._grid_x[network_operator][2*time: 2*time+2, 4*freq: 4*freq+4] = \
                         self._grid_unit_x + self._grid_spacing_x * freq
                     self._grid_y[network_operator][2*time: 2*time+2, 4*freq: 4*freq+4] = \
@@ -62,18 +63,39 @@ class RadioTime:
             self._mesh_dict[network_operator] = mesh
             self._plotter.add_mesh(mesh, color=color[ind], opacity=1)
 
+    def log_decode(self, ch_info):
+        ch_agent = ch_info.pop('agent')
+        ch_users = np.sum(list(ch_info.values()), axis=0)
+        ch_collision = []
+        for i in range(self._freq_channel_num):
+            if ch_agent[i] >= 1 and ch_users[i] >= 1:
+                ch_collision.append(1)
+            else:
+                ch_collision.append(0)
+        ch_info['agent'] = ch_agent
+        ch_info['collision'] = ch_collision
+
+        for network_operator in ch_info:
+            if network_operator == 'collision':
+                for ind in range(self._freq_channel_num):
+                    if ch_info[network_operator][ind] == 1:
+                        self.send_packet(network_operator, ind)
+                    elif ch_info[network_operator][ind] == 0:
+                        self.receive_packet(network_operator, ind)
+            else:
+                for ind in range(self._freq_channel_num):
+                    if ch_info['collision'][ind] == 1:
+                        self.receive_packet(network_operator, ind)
+                    else:
+                        if ch_info[network_operator][ind] == 1:
+                            self.send_packet(network_operator, ind)
+                        elif ch_info[network_operator][ind] == 0:
+                            self.receive_packet(network_operator, ind)
+
 
     def send_packet(self, network_operator: str, freq_channel: int):
         ind = self._freq_channel_list.index(freq_channel)
         self._current_occupancy[network_operator][0: 2, 4 * ind: 4 * (ind + 1)] = self._cell_unit
-
-        if network_operator == 'agent':
-            self._collision[ind] = 1
-        else:
-            if self._collision[ind] == 1:
-                for network_operator in self._network_operator_list:
-                    self._current_occupancy[network_operator][0: 2, 4 * ind: 4 * (ind + 1)] = np.array([[0, 0, 0, 0], [0, 0, 0, 0]])
-                self._current_occupancy['collision'][0: 2, 4 * ind: 4 * (ind + 1)] = self._cell_unit
 
     def receive_packet(self, network_operator: str, freq_channel: int):
         ind = self._freq_channel_list.index(freq_channel)
@@ -88,7 +110,6 @@ class RadioTime:
                                       self._grid_y[network_operator].flatten(order='F'),
                                       time_occupancy.flatten(order='F')))
             self._mesh_dict[network_operator].points = points
-        self._collision = [0] * len(self._freq_channel_list)
 
 
 class Visualization:
@@ -100,26 +121,20 @@ class Visualization:
         self._radio_time.set_freq_channel_list(freq_channel_list)
         self._radio_time.set_network_operator_list(network_operator_list)
 
-        self._time_text = self._plotter.add_text('')
-        self._time_text.SetMaximumFontSize(30)
+        self._text = self._plotter.add_text('')
+        self._text.SetMaximumFontSize(30)
         self._plotter.open_movie(video_file_path, framerate=frame_rate)
         self._times = 0
         self._rewards = 0
+        self._pattern = tuple()
 
     def __call__(self, log):
         self._times += 1
         self._rewards += log['reward']
-        pattern = log['pattern']
-        self._time_text.SetText(2, f' Times: {self._times}\n Rewards: {self._rewards}\n Pattern: {pattern}')
+        self._pattern = log['pattern']
+        self._text.SetText(2, f' Times: {self._times}\n Rewards: {self._rewards}\n Pattern: {self._pattern}')
         ch_info = log['channel info']
-        for network_operator in ch_info:
-            freq_channel_list = ch_info[network_operator]['freq channel']
-            packet = ch_info[network_operator]['packet']
-            for freq_channel in freq_channel_list:
-                if packet == 0:
-                    self._radio_time.receive_packet(network_operator, freq_channel)
-                elif packet == 1:
-                    self._radio_time.send_packet(network_operator, freq_channel)
+        self._radio_time.log_decode(ch_info)
         self._radio_time.update()
         self._plotter.render()
         self._plotter.write_frame()

@@ -1,15 +1,17 @@
 import random
 import numpy as np
+import torch
+import torch.distributions as td
 from visualization import Visualization
 
 
 class Simulator:
-    def __init__(self, rendering: bool = False, path: str = '', pattern_fixed: bool = False, pomdp: bool = False,
+    def __init__(self, rendering: bool = False, path: str = '', pattern_fixed: bool = False, pomdp_mode: bool = False,
                  max_period: int = 20, cycle_range: tuple = (500, 1000), seed: int = 0):
         self._pattern_fixed = pattern_fixed
-        self._pomdp_mode = pomdp
+        self._pomdp_mode = pomdp_mode
         self._max_period = max_period
-        self._cycle_range = cycle_range
+        self._cycle_range = tuple(cycle_range)
         self._rendering = rendering
         if self._rendering:
             self._visualization = Visualization(video_file_path=path, freq_channel_list=[0],
@@ -51,16 +53,14 @@ class Simulator:
             self._cycles -= 1
 
         # reward
-        if action[0]:  # packet not sent    [1, 0]
+        if action[0]:      # packet not sent    [1, 0]
             reward = -1.0 if self._ch_state == 0 else 1.0
         else:              # packet sent
             reward = 3.0 if self._ch_state == 0 else -3.0
 
         # visualization
         if self._rendering:
-            self._log = {'channel info': {'collision': {'freq channel': [0], 'packet': 0},
-                                          'agent':{'freq channel': [0], 'packet': np.argmax(action)},
-                                          'user1':{'freq channel': [0], 'packet': self._ch_state}},
+            self._log = {'channel info': {'agent': [np.argmax(action)], 'user1': [self._ch_state]},
                          'reward': reward,
                          'pattern': (self._empty, self._using)}
             self._visualization(self._log)
@@ -79,8 +79,6 @@ class Simulator:
         self._pointer = 0
 
 
-import torch
-import torch.distributions as td
 class Simulator_Markovian:
     def __init__(self, rendering: bool = False, path: str = '', p: float = 0.7, q : float = 0.8):
         self._p = p
@@ -125,14 +123,10 @@ class Simulator_Markovian:
 
         # visualization
         if self._rendering:
-            self._log = {'channel info': {'collision': {'freq channel': [0], 'packet': 0},
-                                          'agent':{'freq channel': [0], 'packet': np.argmax(action)},
-                                          'user1':{'freq channel': [0], 'packet': self._ch_state}},
+            self._log = {'channel info': {'agent': [np.argmax(action)], 'user1': [self._ch_state]},
                          'reward': reward,
                          'pattern': "markov"}
             self._visualization(self._log)
-
-
         return obs, reward
 
     def sample_action(self):
