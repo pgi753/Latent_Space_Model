@@ -387,7 +387,6 @@ class TransitionMatrix2(nn.Module):
         action = torch.argmax(action, dim=-1, keepdim=True).unsqueeze(dim=-2).unsqueeze(dim=-1).unsqueeze(dim=-1)
         action = action.expand((-1, -1, self._state_cls_size, -1, self._state_cat_size, self._state_cat_size))
         tr_matrix = F.softmax(self.transition_matrix, dim=-2).unsqueeze(dim=0).unsqueeze(dim=0)
-        tr_mat = torch.sum(tr_matrix, dim=-2, keepdim=True)
         tr_matrix = tr_matrix.expand((sequence_size, batch_size, -1, -1, -1, -1))
         prob = torch.gather(input=tr_matrix, dim=3, index=action).squeeze(dim=3)
         if dim == 2:
