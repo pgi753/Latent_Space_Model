@@ -92,16 +92,8 @@ class Evaluator:
         reward_rate = total_reward / optimal_reward
         success_rate = success / num_steps
         failure_rate = failure / num_steps
-
         self._result['total_reward'].append(total_reward)
         self._result['reward_rate'].append(reward_rate)
         self._result['success_rate'].append(success_rate)
         self._result['failure_rate'].append(failure_rate)
-
         return observ_list, reward_list, action_list
-
-    def test(self, test_steps:int = 1000):
-        print(f"observ, action, reward")
-        for _ in range(test_steps):
-            obs, rew, act = self.step()
-            print(f"{np.argmax(obs, axis=-1)}, {np.argmax(act, axis=-1)}, {np.round(rew)}")
