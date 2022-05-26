@@ -1,6 +1,13 @@
+main:
+  collect_episode_size: 500
+  train_steps: 1000
+  collect_interval: 5
+  interaction_steps: 20
+  test_steps: 100
+
 env:
   env_name: Simulator
-  rendering: True
+  rendering: False
   pattern_fixed: True
   pomdp_mode: False
   max_period: 20
@@ -10,9 +17,10 @@ env:
   q: 0.8
 
 pomdp_model:
-  device: 'cuda'
+  device: 'cuda:1'
   state_cls_size: 1
   state_cat_size: 64
+  state_sample_size: 64
   action_size: 2
   observ_size: 2
   rnn_input_size: 8
@@ -20,24 +28,19 @@ pomdp_model:
   seq_len: 400
   batch_size: 60
   horizon: 100
-  wm_lr: 0.003
-  actor_lr: 0.00001
-  value_lr: 0.0005
+  wm_lr: 0.005
+  actor_lr: 0.0004
+  value_lr: 0.001
   lambda: 0.9
   actor_entropy_scale: 0.001
   discount: 0.99
-  kld_scale: 1
+  kld_scale: 5
   value_mix_rate: 1
   update_interval: 10
 
 files:
-  model_name: model.pt
-  video_name: video.mp4
-  metrics_name: metrics.csv
-  result_name: result.csv
-
-
-
-
-
+  model_name: model5.pt
+  video_name: video5.mp4
+  metrics_name: metrics5.csv
+  result_name: result5.csv
 

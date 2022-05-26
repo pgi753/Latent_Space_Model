@@ -11,6 +11,7 @@ class Trainer:
     def __init__(self, config):
         self._state_cls_size = config['pomdp_model']['state_cls_size']
         self._state_cat_size = config['pomdp_model']['state_cat_size']
+        self._state_sample_size = config['pomdp_model']['state_sample_size']
         self._action_shape = (config['pomdp_model']['action_size'],)
         self._observ_shape = (config['pomdp_model']['observ_size'],)
         self._rnn_input_size = config['pomdp_model']['rnn_input_size']
@@ -28,13 +29,13 @@ class Trainer:
         self._value_mix_rate = config['pomdp_model']['value_mix_rate']
         self._update_interval = config['pomdp_model']['update_interval']
         if torch.cuda.is_available() and config['pomdp_model']['device']:
-            self._device = torch.device('cuda')
+            self._device = torch.device(config['pomdp_model']['device'])
         else:
             self._device = torch.device('cpu')
         self._buffer = Buffer(1000000, self._observ_shape, self._action_shape, self._seq_len, self._batch_size)
         self._model_path = str(Path(__file__).parent.resolve() / 'SavedModels' /config['files']['model_name'])
-        self._pomdp = POMDPModel(self._state_cls_size, self._state_cat_size, self._action_shape, self._observ_shape,
-                                 self._rnn_input_size, self._rnn_hidden_size, self._device,
+        self._pomdp = POMDPModel(self._state_cls_size, self._state_cat_size, self._state_sample_size, self._action_shape,
+                                 self._observ_shape, self._rnn_input_size, self._rnn_hidden_size, self._device,
                                  self._wm_lr, self._actor_lr, self._value_lr, self._lambda, self._actor_entropy_scale,
                                  self._discount, self._kld_scale)
         self._set_model()

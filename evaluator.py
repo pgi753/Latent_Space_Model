@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import pandas as pd
 from simulator import Simulator, Simulator_Markovian
@@ -11,6 +10,7 @@ class Evaluator:
         # pomdp model
         self._state_cls_size = config['pomdp_model']['state_cls_size']
         self._state_cat_size = config['pomdp_model']['state_cat_size']
+        self._state_sample_size = config['pomdp_model']['state_sample_size']
         self._action_shape = (config['pomdp_model']['action_size'],)
         self._observ_shape = (config['pomdp_model']['observ_size'],)
         self._rnn_input_size = config['pomdp_model']['rnn_input_size']
@@ -28,8 +28,8 @@ class Evaluator:
         else:
             self._device = torch.device('cpu')
         self._model_path = str(Path(__file__).parent.resolve() / 'SavedModels' /config['files']['model_name'])
-        self._pomdp = POMDPModel(self._state_cls_size, self._state_cat_size, self._action_shape, self._observ_shape,
-                                 self._rnn_input_size, self._rnn_hidden_size, self._device,
+        self._pomdp = POMDPModel(self._state_cls_size, self._state_cat_size, self._state_sample_size, self._action_shape,
+                                 self._observ_shape, self._rnn_input_size, self._rnn_hidden_size, self._device,
                                  self._wm_lr, self._actor_lr, self._value_lr, self._lambda, self._actor_entropy_scale,
                                  self._discount, self._kld_scale)
         self._pomdp.load_model(self._model_path)

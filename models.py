@@ -7,12 +7,12 @@ import torch.distributions as td
 import torch.optim as optim
 from utility import get_parameters, FreezeParameters
 
-
 class POMDPModel:
-    def __init__(self, state_cls_size, state_cat_size, action_shape, observ_shape, rnn_input_size, rnn_hidden_size,
-                 device, wm_lr, actor_lr, value_lr, _lambda, actor_entropy_scale, discount, kld_scale):
+    def __init__(self, state_cls_size, state_cat_size, state_sample_size, action_shape, observ_shape, rnn_input_size,
+                 rnn_hidden_size, device, wm_lr, actor_lr, value_lr, _lambda, actor_entropy_scale, discount, kld_scale):
         self._state_cls_size = state_cls_size
         self._state_cat_size = state_cat_size
+        self._state_sample_size = state_sample_size
         self._action_shape = action_shape
         self._observ_shape = observ_shape
         self._rnn_input_size = rnn_input_size
@@ -32,9 +32,8 @@ class POMDPModel:
                                                     rnn_input_size=rnn_input_size).to(device)
         self._transition_matrix = TransitionMatrix(action_shape=action_shape, state_cls_size=state_cls_size,
                                                    state_cat_size=state_cat_size).to(device)
-
-        self._transition_matrix2 = TransitionMatrix2(action_shape, state_cls_size, state_cat_size, device)
-
+        self._transition_matrix2 = TransitionMatrix2(action_shape=action_shape, state_cls_size=state_cls_size,
+                                                     state_cat_size=state_cat_size).to(device)
         self._observ_decoder = ObservDecoder(state_cls_size=state_cls_size, state_cat_size=state_cat_size,
                                              observ_shape=observ_shape).to(device)
         self._reward_model = RewardModel(state_cls_size=state_cls_size, state_cat_size=state_cat_size).to(device)
@@ -109,6 +108,14 @@ class POMDPModel:
         states_one_hot = F.one_hot(states, num_classes=self._state_cat_size).type(torch.float32).to(self._device)
         return states, states_one_hot
 
+    def get_some_states(self):
+        all_state = np.arange(self._state_cat_size)
+        states = np.random.choice(all_state, size=self._state_sample_size, replace=False)
+        states = np.expand_dims(np.sort(states), axis=-1)
+        states = torch.tensor(states, dtype=torch.int64).to(self._device)
+        states_one_hot = F.one_hot(states, num_classes=self._state_cat_size).type(torch.float32).to(self._device)
+        return states, states_one_hot
+
     def world_model_loss(self, observ, action, reward):
         batch_size = observ.shape[1]
         rnn_input = self._action_observ_to_rnn_input(action, observ)
@@ -136,7 +143,8 @@ class POMDPModel:
 
     def observ_loss(self, observ, posterior):
         sequence_size, batch_size = observ.shape[0], observ.shape[1]
-        states, states_one_hot = self.get_all_states()
+        # states, states_one_hot = self.get_all_states()
+        states, states_one_hot = self.get_some_states()
         num_states = states.shape[0]
         ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
         ob_dist = ob_dist.expand((sequence_size, batch_size, num_states))
@@ -151,7 +159,8 @@ class POMDPModel:
 
     def reward_loss(self, reward, posterior):
         sequence_size, batch_size = reward.shape[0], reward.shape[1]
-        states, states_one_hot = self.get_all_states()
+        # states, states_one_hot = self.get_all_states()
+        states, states_one_hot = self.get_some_states()
         num_states = states.shape[0]
         rew_dist = self._reward_model(states_one_hot)
         rew_dist = rew_dist.expand((sequence_size, batch_size, num_states))
@@ -254,8 +263,8 @@ class POMDPModel:
                 ac = action_dist.sample()
                 action = F.one_hot(ac, num_classes=self._action_shape[-1]).type(dtype=torch.float32).detach()
 
-                # tr_logit, tr_prob, tr_dist1 = self._transition_matrix(action)        # imagine (= transition)
-                # tr_sample1 = tr_dist1.sample()
+                # tr_logit, tr_prob, tr_dist = self._transition_matrix(action)        # imagine (= transition)
+                # tr_sample = tr_dist.sample()
                 tr_prob, tr_dist = self._transition_matrix2(action)
                 tr_sample = tr_dist.sample()                                        # sample s_{t+1} based on q(s_{t+1}|s_t,a_t)
                 state = torch.gather(tr_sample, dim=-1, index=state.unsqueeze(dim=-1)).squeeze(dim=-1)
@@ -365,19 +374,19 @@ class TransitionMatrix(nn.Module):
 
 
 class TransitionMatrix2(nn.Module):
-    def __init__(self, action_shape, state_cls_size, state_cat_size, device):
+    def __init__(self, action_shape, state_cls_size, state_cat_size):
         super().__init__()
         action_size = int(action_shape[0])
         self._state_cls_size = state_cls_size
         self._state_cat_size = state_cat_size
         self.transition_matrix = nn.Parameter(torch.zeros((state_cls_size, action_size, state_cat_size, state_cat_size),
-                                                          requires_grad=True, dtype=torch.float32).to(device))
+                                                          requires_grad=True, dtype=torch.float32))
 
     def forward(self, action):
         """
-        :param action: seq_len, batch_size, action_size (400, 60, 2)
-        tr_matrix: class_size, action_size, cat_size, cat_size (1, 2, 64, 64)
-        tr_prob: seq_len, batch_size, class_size, cat_size, cat_size (400, 60, 1, 64, 64)
+        :param action: (seq_len, batch_size, action_size) (seq_len, 60, 2)
+        tr_matrix: (class_size, action_size, cat_size, cat_size) (1, 2, 64, 64)
+        tr_prob: (seq_len, batch_size, class_size, cat_size, cat_size) (seq_len, 60, 1, 64, 64)
         :return: tr_prob
         """
         dim = action.dim()
@@ -386,7 +395,7 @@ class TransitionMatrix2(nn.Module):
         sequence_size, batch_size = action.shape[0], action.shape[1]
         action = torch.argmax(action, dim=-1, keepdim=True).unsqueeze(dim=-2).unsqueeze(dim=-1).unsqueeze(dim=-1)
         action = action.expand((-1, -1, self._state_cls_size, -1, self._state_cat_size, self._state_cat_size))
-        tr_matrix = F.softmax(self.transition_matrix, dim=-2).unsqueeze(dim=0).unsqueeze(dim=0)
+        tr_matrix = F.softmax(self.transition_matrix, dim=-1).unsqueeze(dim=0).unsqueeze(dim=0)
         tr_matrix = tr_matrix.expand((sequence_size, batch_size, -1, -1, -1, -1))
         prob = torch.gather(input=tr_matrix, dim=3, index=action).squeeze(dim=3)
         if dim == 2:
