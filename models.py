@@ -109,9 +109,7 @@ class POMDPModel:
         return states, states_one_hot
 
     def get_some_states(self):
-        all_state = np.arange(self._state_cat_size)
-        states = np.random.choice(all_state, size=self._state_sample_size, replace=False)
-        states = np.expand_dims(np.sort(states), axis=-1)
+        states = np.random.randint(self._state_cat_size, size=(self._state_sample_size, self._state_cls_size))
         states = torch.tensor(states, dtype=torch.int64).to(self._device)
         states_one_hot = F.one_hot(states, num_classes=self._state_cat_size).type(torch.float32).to(self._device)
         return states, states_one_hot

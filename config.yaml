@@ -17,8 +17,8 @@ env:
   q: 0.8
 
 pomdp_model:
-  device: 'cuda:1'
-  state_cls_size: 1
+  device: 'cuda:0'
+  state_cls_size: 2
   state_cat_size: 64
   state_sample_size: 64
   action_size: 2
@@ -39,8 +39,8 @@ pomdp_model:
   update_interval: 10
 
 files:
-  model_name: model5.pt
-  video_name: video5.mp4
-  metrics_name: metrics5.csv
-  result_name: result5.csv
+  model_name: model14.pt
+  video_name: video14.mp4
+  metrics_name: metrics14.csv
+  result_name: result14.csv
 
