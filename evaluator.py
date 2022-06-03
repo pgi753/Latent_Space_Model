@@ -15,6 +15,8 @@ class Evaluator:
         self._observ_shape = (config['pomdp_model']['observ_size'],)
         self._rnn_input_size = config['pomdp_model']['rnn_input_size']
         self._rnn_hidden_size = config['pomdp_model']['rnn_hidden_size']
+        self._seq_len = config['pomdp_model']['seq_len']
+        self._batch_size = config['pomdp_model']['batch_size']
         self._horizon = config['pomdp_model']['horizon']
         self._wm_lr = config['pomdp_model']['wm_lr']
         self._actor_lr = config['pomdp_model']['actor_lr']
@@ -29,9 +31,9 @@ class Evaluator:
             self._device = torch.device('cpu')
         self._model_path = str(Path(__file__).parent.resolve() / 'SavedModels' /config['files']['model_name'])
         self._pomdp = POMDPModel(self._state_cls_size, self._state_cat_size, self._state_sample_size, self._action_shape,
-                                 self._observ_shape, self._rnn_input_size, self._rnn_hidden_size, self._device,
+                                 self._observ_shape, self._rnn_input_size, self._rnn_hidden_size, self._seq_len, self._batch_size,
                                  self._wm_lr, self._actor_lr, self._value_lr, self._lambda, self._actor_entropy_scale,
-                                 self._discount, self._kld_scale)
+                                 self._discount, self._kld_scale, self._device)
         self._pomdp.load_model(self._model_path)
 
         # env
