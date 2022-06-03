@@ -9,7 +9,8 @@ from utility import get_parameters, FreezeParameters
 
 class POMDPModel:
     def __init__(self, state_cls_size, state_cat_size, state_sample_size, action_shape, observ_shape, rnn_input_size,
-                 rnn_hidden_size, device, wm_lr, actor_lr, value_lr, _lambda, actor_entropy_scale, discount, kld_scale):
+                 rnn_hidden_size, seq_len, batch_size, wm_lr, actor_lr, value_lr, _lambda, actor_entropy_scale,
+                 discount, kld_scale, device):
         self._state_cls_size = state_cls_size
         self._state_cat_size = state_cat_size
         self._state_sample_size = state_sample_size
@@ -17,7 +18,8 @@ class POMDPModel:
         self._observ_shape = observ_shape
         self._rnn_input_size = rnn_input_size
         self._rnn_hidden_size = rnn_hidden_size
-        self._device = device
+        self._seq_len = seq_len
+        self._batch_size = batch_size
         self._wm_lr = wm_lr
         self._actor_lr = actor_lr
         self._value_lr = value_lr
@@ -25,6 +27,7 @@ class POMDPModel:
         self._actor_entropy_scale = actor_entropy_scale
         self._discount = discount
         self._kld_scale = kld_scale
+        self._device = device
         self._rnn = nn.GRU(input_size=rnn_input_size, hidden_size=rnn_hidden_size, num_layers=1).to(device)
         self._rnn_hidden_to_belief_vector = BeliefVector(rnn_hidden_size=rnn_hidden_size, state_cls_size=state_cls_size,
                                                          state_cat_size=state_cat_size).to(device)
@@ -108,14 +111,14 @@ class POMDPModel:
         states_one_hot = F.one_hot(states, num_classes=self._state_cat_size).type(torch.float32).to(self._device)
         return states, states_one_hot
 
-    def get_some_states(self):
-        states = np.random.randint(self._state_cat_size, size=(self._state_sample_size, self._state_cls_size))
+    def get_sample_states(self):
+        states = np.random.randint(self._state_cat_size, size=(self._seq_len, self._batch_size, self._state_sample_size, self._state_cls_size))
         states = torch.tensor(states, dtype=torch.int64).to(self._device)
         states_one_hot = F.one_hot(states, num_classes=self._state_cat_size).type(torch.float32).to(self._device)
         return states, states_one_hot
 
     def world_model_loss(self, observ, action, reward):
-        batch_size = observ.shape[1]
+        batch_size = self._batch_size
         rnn_input = self._action_observ_to_rnn_input(action, observ)
         init_rnn_hidden = torch.zeros((1, batch_size, self._rnn_hidden_size), dtype=torch.float32).to(self._device)
         rnn_output, rnn_hidden = self._rnn(rnn_input, init_rnn_hidden)
@@ -129,8 +132,9 @@ class POMDPModel:
         prior = torch.squeeze(torch.matmul(bv_prev, tr_prob), dim=-2)
         posterior = bv_prob[1:]
         kld_loss = self.kld_loss(prior, posterior)
-        obs_loss = self.observ_loss(observ, posterior)
-        reward_loss = self.reward_loss(reward, posterior)
+        states, states_one_hot = self.get_sample_states()
+        obs_loss = self.observ_loss(observ, posterior, states, states_one_hot)
+        reward_loss = self.reward_loss(reward, posterior, states, states_one_hot)
         model_loss = (kld_loss * self._kld_scale) + obs_loss + reward_loss
         return rnn_hidden.detach(), kld_loss.detach(), obs_loss.detach(), model_loss, reward_loss.detach()
 
@@ -139,33 +143,41 @@ class POMDPModel:
                                              dim=-1), dim=-1))
         return kld
 
-    def observ_loss(self, observ, posterior):
-        sequence_size, batch_size = observ.shape[0], observ.shape[1]
+    def observ_loss(self, observ, posterior, states, states_one_hot):
+        # sequence_size, batch_size = self._seq_len, self._batch_size
         # states, states_one_hot = self.get_all_states()
-        states, states_one_hot = self.get_some_states()
-        num_states = states.shape[0]
+        # num_states = states.shape[0]
+        # ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
+        # ob_dist = ob_dist.expand((sequence_size, batch_size, num_states))
+
+        # states, states_one_hot = self.get_sample_states()
+        num_states = self._state_sample_size
         ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
-        ob_dist = ob_dist.expand((sequence_size, batch_size, num_states))
         ob = observ.unsqueeze(-len(self._observ_shape)-1).expand((-1, -1, num_states, *self._observ_shape))
         ob = torch.argmax(ob, dim=-1)
         lp = ob_dist.log_prob(ob)
         post = posterior.unsqueeze(dim=-3).expand((-1, -1, num_states, -1, -1))
-        states = states.unsqueeze(dim=-1).expand((sequence_size, batch_size, num_states, -1, -1))
+        # states = states.unsqueeze(dim=-1).expand((sequence_size, batch_size, num_states, -1, -1))
+        states = states.unsqueeze(dim=-1)
         pr = torch.prod(torch.gather(post, dim=-1, index=states).squeeze(dim=-1), dim=-1)
         obs_loss = -torch.mean(torch.sum(pr * lp, dim=-1))
         return obs_loss
 
-    def reward_loss(self, reward, posterior):
-        sequence_size, batch_size = reward.shape[0], reward.shape[1]
+    def reward_loss(self, reward, posterior, states, states_one_hot):
+        # sequence_size, batch_size = self._seq_len, self._batch_size
         # states, states_one_hot = self.get_all_states()
-        states, states_one_hot = self.get_some_states()
-        num_states = states.shape[0]
+        # num_states = states.shape[0]
+        # rew_dist = self._reward_model(states_one_hot)
+        # rew_dist = rew_dist.expand((sequence_size, batch_size, num_states))
+
+        # states, states_one_hot = self.get_sample_states()
+        num_states = self._state_sample_size
         rew_dist = self._reward_model(states_one_hot)
-        rew_dist = rew_dist.expand((sequence_size, batch_size, num_states))
         rew = reward.unsqueeze(-1).expand((-1, -1, num_states))
         lp = rew_dist.log_prob(rew)
         post = posterior.unsqueeze(dim=-3).expand((-1, -1, num_states, -1, -1))
-        states = states.unsqueeze(dim=-1).expand((sequence_size, batch_size, num_states, -1, -1))
+        # states = states.unsqueeze(dim=-1).expand((sequence_size, batch_size, num_states, -1, -1))
+        states = states.unsqueeze(dim=-1)
         pr = torch.prod(torch.gather(post, dim=-1, index=states).squeeze(dim=-1), dim=-1)
         reward_loss = -torch.mean(torch.sum(pr * lp, dim=-1))
         return reward_loss
