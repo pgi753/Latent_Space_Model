@@ -124,10 +124,8 @@ class POMDPModel:
         rnn_output, rnn_hidden = self._rnn(rnn_input, init_rnn_hidden)
         rnn_combined = torch.cat((init_rnn_hidden, rnn_output), dim=0)
         bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_combined)
-
         # tr_logit, tr_prob, tr_dist = self._transition_matrix(action)
         tr_prob, tr_dist = self._transition_matrix2(action)
-
         bv_prev = torch.unsqueeze(bv_prob[:-1], -2)
         prior = torch.squeeze(torch.matmul(bv_prev, tr_prob), dim=-2)
         posterior = bv_prob[1:]
@@ -150,7 +148,6 @@ class POMDPModel:
         # ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
         # ob_dist = ob_dist.expand((sequence_size, batch_size, num_states))
 
-        # states, states_one_hot = self.get_sample_states()
         num_states = self._state_sample_size
         ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
         ob = observ.unsqueeze(-len(self._observ_shape)-1).expand((-1, -1, num_states, *self._observ_shape))
@@ -170,7 +167,6 @@ class POMDPModel:
         # rew_dist = self._reward_model(states_one_hot)
         # rew_dist = rew_dist.expand((sequence_size, batch_size, num_states))
 
-        # states, states_one_hot = self.get_sample_states()
         num_states = self._state_sample_size
         rew_dist = self._reward_model(states_one_hot)
         rew = reward.unsqueeze(-1).expand((-1, -1, num_states))
@@ -394,9 +390,9 @@ class TransitionMatrix2(nn.Module):
 
     def forward(self, action):
         """
-        :param action: (seq_len, batch_size, action_size) (seq_len, 60, 2)
-        tr_matrix: (class_size, action_size, cat_size, cat_size) (1, 2, 64, 64)
-        tr_prob: (seq_len, batch_size, class_size, cat_size, cat_size) (seq_len, 60, 1, 64, 64)
+        :param action: (seq_len, batch_size, action_size)
+        tr_matrix: (class_size, action_size, cat_size, cat_size)
+        tr_prob: (seq_len, batch_size, class_size, cat_size, cat_size)
         :return: tr_prob
         """
         dim = action.dim()
@@ -443,7 +439,6 @@ class RewardModel(nn.Module):
     def forward(self, state):
         mean = torch.squeeze(self._model(state), dim=-1)
         dist = td.Normal(mean, 0.4)
-        dist = td.independent.Independent(dist, reinterpreted_batch_ndims=0)
         return dist
 
 
