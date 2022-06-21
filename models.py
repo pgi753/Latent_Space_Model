@@ -35,8 +35,10 @@ class POMDPModel:
                                                     rnn_input_size=rnn_input_size).to(device)
         self._transition_matrix = TransitionMatrix(action_shape=action_shape, state_cls_size=state_cls_size,
                                                    state_cat_size=state_cat_size).to(device)
-        self._transition_matrix2 = TransitionMatrix2(action_shape=action_shape, state_cls_size=state_cls_size,
-                                                     state_cat_size=state_cat_size).to(device)
+        self._transition_matrix_parm = TransitionMatrixParameter(action_shape=action_shape, state_cls_size=state_cls_size,
+                                                                 state_cat_size=state_cat_size).to(device)
+        self._transition_and_mul_bv = Prior(action_shape=action_shape, state_cls_size=state_cls_size,
+                                            state_cat_size=state_cat_size).to(device)
         self._observ_decoder = ObservDecoder(state_cls_size=state_cls_size, state_cat_size=state_cat_size,
                                              observ_shape=observ_shape).to(device)
         self._reward_model = RewardModel(state_cls_size=state_cls_size, state_cat_size=state_cat_size).to(device)
@@ -47,7 +49,8 @@ class POMDPModel:
         self._prev_rnn_hidden = torch.zeros((1, 1, rnn_hidden_size), dtype=torch.float32).to(device).detach()
         self._prev_action = torch.zeros(action_shape, dtype=torch.float32).to(device).detach()
         self._world_model_modules = [self._rnn, self._rnn_hidden_to_belief_vector, self._action_observ_to_rnn_input,
-                                     self._transition_matrix2, self._observ_decoder, self._reward_model]
+                                     self._transition_matrix, self._transition_matrix_parm, self._transition_and_mul_bv,
+                                     self._observ_decoder, self._reward_model]
         self._world_model_optimizer = optim.Adam(get_parameters(self._world_model_modules), lr=self._wm_lr)
         self._actor_optimizer = optim.Adam(get_parameters([self._actor]), lr=self._actor_lr)
         self._value_model_optimizer = optim.Adam(get_parameters([self._value_model]), lr=self._value_lr)
@@ -118,21 +121,47 @@ class POMDPModel:
         return states, states_one_hot
 
     def world_model_loss(self, observ, action, reward):
-        batch_size = self._batch_size
         rnn_input = self._action_observ_to_rnn_input(action, observ)
-        init_rnn_hidden = torch.zeros((1, batch_size, self._rnn_hidden_size), dtype=torch.float32).to(self._device)
+        init_rnn_hidden = torch.zeros((1, self._batch_size, self._rnn_hidden_size), dtype=torch.float32).to(self._device)
         rnn_output, rnn_hidden = self._rnn(rnn_input, init_rnn_hidden)
         rnn_combined = torch.cat((init_rnn_hidden, rnn_output), dim=0)
         bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_combined)
+
+        # 1-1. Use transition matrix network
         # tr_logit, tr_prob, tr_dist = self._transition_matrix(action)
-        tr_prob, tr_dist = self._transition_matrix2(action)
+        # bv_prev = torch.unsqueeze(bv_prob[:-1], -2)
+        # prior = torch.squeeze(torch.matmul(bv_prev, tr_prob), dim=-2)
+
+        # 1-2. Use transition matrix parameter
+        tr_prob, tr_dist = self._transition_matrix_parm(action)
         bv_prev = torch.unsqueeze(bv_prob[:-1], -2)
         prior = torch.squeeze(torch.matmul(bv_prev, tr_prob), dim=-2)
+
+        # 1-3. Use transition and multiply belief vector module
+        # bv_prev = bv_prob[:-1]
+        # prior, dist = self._transition_and_mul_bv(action, bv_prev)
+
         posterior = bv_prob[1:]
         kld_loss = self.kld_loss(prior, posterior)
-        states, states_one_hot = self.get_sample_states()
+
+
+        # 2-1. Use all state
+        # states, states_one_hot = self.get_all_states()
+        # obs_loss = self.observ_loss_all_state(observ, posterior, states, states_one_hot)
+        # reward_loss = self.reward_loss_all_state(reward, posterior, states, states_one_hot)
+
+        # 2-2. Use sample state
+        # states, states_one_hot = self.get_sample_states()
+        # obs_loss = self.observ_loss(observ, posterior, states, states_one_hot)
+        # reward_loss = self.reward_loss(reward, posterior, states, states_one_hot)
+
+        # 2-3. Use straight through
+        states = bv_dist.sample().unsqueeze(dim=-1)[1:]
+        states_one_hot = F.one_hot(states, num_classes=self._state_cat_size).type(torch.float32).to(self._device)
+        states_one_hot += bv_prob[1:].unsqueeze(dim=-3) - bv_prob[1:].unsqueeze(dim=-3).detach()
         obs_loss = self.observ_loss(observ, posterior, states, states_one_hot)
         reward_loss = self.reward_loss(reward, posterior, states, states_one_hot)
+
         model_loss = (kld_loss * self._kld_scale) + obs_loss + reward_loss
         return rnn_hidden.detach(), kld_loss.detach(), obs_loss.detach(), model_loss, reward_loss.detach()
 
@@ -142,38 +171,49 @@ class POMDPModel:
         return kld
 
     def observ_loss(self, observ, posterior, states, states_one_hot):
-        # sequence_size, batch_size = self._seq_len, self._batch_size
-        # states, states_one_hot = self.get_all_states()
-        # num_states = states.shape[0]
-        # ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
-        # ob_dist = ob_dist.expand((sequence_size, batch_size, num_states))
-
         num_states = self._state_sample_size
         ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
         ob = observ.unsqueeze(-len(self._observ_shape)-1).expand((-1, -1, num_states, *self._observ_shape))
         ob = torch.argmax(ob, dim=-1)
         lp = ob_dist.log_prob(ob)
         post = posterior.unsqueeze(dim=-3).expand((-1, -1, num_states, -1, -1))
-        # states = states.unsqueeze(dim=-1).expand((sequence_size, batch_size, num_states, -1, -1))
         states = states.unsqueeze(dim=-1)
         pr = torch.prod(torch.gather(post, dim=-1, index=states).squeeze(dim=-1), dim=-1)
         obs_loss = -torch.mean(torch.sum(pr * lp, dim=-1))
         return obs_loss
 
-    def reward_loss(self, reward, posterior, states, states_one_hot):
-        # sequence_size, batch_size = self._seq_len, self._batch_size
-        # states, states_one_hot = self.get_all_states()
-        # num_states = states.shape[0]
-        # rew_dist = self._reward_model(states_one_hot)
-        # rew_dist = rew_dist.expand((sequence_size, batch_size, num_states))
+    def observ_loss_all_state(self, observ, posterior, states, states_one_hot):
+        num_states = states.shape[0]
+        ob_logit, ob_prob, ob_dist = self._observ_decoder(states_one_hot)
+        ob_dist = ob_dist.expand((self._seq_len, self._batch_size, num_states))
+        ob = observ.unsqueeze(-len(self._observ_shape)-1).expand((-1, -1, num_states, *self._observ_shape))
+        ob = torch.argmax(ob, dim=-1)
+        lp = ob_dist.log_prob(ob)
+        post = posterior.unsqueeze(dim=-3).expand((-1, -1, num_states, -1, -1))
+        states = states.unsqueeze(dim=-1).expand((self._seq_len, self._batch_size, num_states, -1, -1))
+        pr = torch.prod(torch.gather(post, dim=-1, index=states).squeeze(dim=-1), dim=-1)
+        obs_loss = -torch.mean(torch.sum(pr * lp, dim=-1))
+        return obs_loss
 
+    def reward_loss(self, reward, posterior, states, states_one_hot):
         num_states = self._state_sample_size
         rew_dist = self._reward_model(states_one_hot)
         rew = reward.unsqueeze(-1).expand((-1, -1, num_states))
         lp = rew_dist.log_prob(rew)
         post = posterior.unsqueeze(dim=-3).expand((-1, -1, num_states, -1, -1))
-        # states = states.unsqueeze(dim=-1).expand((sequence_size, batch_size, num_states, -1, -1))
         states = states.unsqueeze(dim=-1)
+        pr = torch.prod(torch.gather(post, dim=-1, index=states).squeeze(dim=-1), dim=-1)
+        reward_loss = -torch.mean(torch.sum(pr * lp, dim=-1))
+        return reward_loss
+
+    def reward_loss_all_state(self, reward, posterior, states, states_one_hot):
+        num_states = states.shape[0]
+        rew_dist = self._reward_model(states_one_hot)
+        rew_dist = rew_dist.expand((self._seq_len, self._batch_size, num_states))
+        rew = reward.unsqueeze(-1).expand((-1, -1, num_states))
+        lp = rew_dist.log_prob(rew)
+        post = posterior.unsqueeze(dim=-3).expand((-1, -1, num_states, -1, -1))
+        states = states.unsqueeze(dim=-1).expand((self._seq_len, self._batch_size, num_states, -1, -1))
         pr = torch.prod(torch.gather(post, dim=-1, index=states).squeeze(dim=-1), dim=-1)
         reward_loss = -torch.mean(torch.sum(pr * lp, dim=-1))
         return reward_loss
@@ -223,36 +263,48 @@ class POMDPModel:
         return value_loss
 
     def rollout_imagination(self, horizon, rnn_hidden):
-        bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_hidden[0, :, :])     # b0
-        state = bv_dist.sample()                                                                # sample s0 based on b0
-        state_list = [F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)]   # append s0
-        belief_vector_list = [bv_prob]                                                          # append b0
+        bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_hidden[0, :, :])             # b0
+        state = bv_dist.sample()                                                                        # sample s0 based on b0
+        state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
+        state_list = [state_one_hot]                                                                    # append s0
+        belief_vector_list = [bv_prob]                                                                  # append b0
         img_action_entropy = []
         img_action_log_probs = []
 
         for h in range(horizon-1):
-            action_logit, action_prob, action_dist = self._actor(bv_prob.detach())              # sample a_t by using actor model
+            action_logit, action_prob, action_dist = self._actor(bv_prob.detach())                      # sample a_t by using actor model
             act = action_dist.sample()
             action = F.one_hot(act, num_classes=self._action_shape[-1]).type(dtype=torch.float32)
 
-            # tr_logit, tr_prob, tr_dist = self._transition_matrix(action.detach())               # imagine (= transition)
-            tr_prob, tr_dist = self._transition_matrix2(action.detach())
-            tr_sample = tr_dist.sample()                                                        # sample s_{t+1} based on q(s_{t+1}|s_t,a_t)
+            # 1-1. Use transition matrix network
+            # tr_logit, tr_prob, tr_dist = self._transition_matrix(action.detach())                       # imagine (= transition)
+            # tr_sample = tr_dist.sample()                                                                # sample s_{t+1} based on q(s_{t+1}|s_t,a_t)
+            # state = torch.gather(tr_sample, dim=-1, index=state.unsqueeze(dim=-1)).squeeze(dim=-1)
+            # state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
+
+            # 1-2. Use transition matrix parameter
+            tr_prob, tr_dist = self._transition_matrix_parm(action.detach())                            # imagine (= transition)
+            tr_sample = tr_dist.sample()                                                                # sample s_{t+1} based on q(s_{t+1}|s_t,a_t)
             state = torch.gather(tr_sample, dim=-1, index=state.unsqueeze(dim=-1)).squeeze(dim=-1)
             state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
 
-            ob_logit, ob_prob, ob_dist = self._observ_decoder(state_one_hot)                    # sample o_{t+1} based on obs model
+            # 1-3. Use transition and multiply belief vector module
+            # state_prob, state_dist = self._transition_and_mul_bv(action.detach(), state_one_hot)
+            # state = state_dist.sample()
+            # state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
+
+            ob_logit, ob_prob, ob_dist = self._observ_decoder(state_one_hot)                            # sample o_{t+1} based on obs model
             observ = F.one_hot(ob_dist.sample(), num_classes=self._observ_shape[-1]).type(torch.float32)
 
-            rnn_input = self._action_observ_to_rnn_input(action.detach(), observ)               # b_{t+1} = f(b_t, a_t, o_{t+1})
+            rnn_input = self._action_observ_to_rnn_input(action.detach(), observ)                       # b_{t+1} = f(b_t, a_t, o_{t+1})
             rnn_input = torch.unsqueeze(rnn_input, 0)
             rnn_output, rnn_hidden = self._rnn(rnn_input, rnn_hidden)
             bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_hidden[0, :, :])
 
-            state_list.append(state_one_hot)                                                    # t = 0,...,H
-            belief_vector_list.append(bv_prob)                                                  # t = 0,...,H
-            img_action_entropy.append(action_dist.entropy())                                    # t = 0,...,H-1
-            img_action_log_probs.append(action_dist.log_prob(act))                              # t = 0,...,H-1
+            state_list.append(state_one_hot)                                                            # t = 0,...,H
+            belief_vector_list.append(bv_prob)                                                          # t = 0,...,H
+            img_action_entropy.append(action_dist.entropy())                                            # t = 0,...,H-1
+            img_action_log_probs.append(action_dist.log_prob(act))                                      # t = 0,...,H-1
         return torch.stack(state_list, dim=0), torch.stack(belief_vector_list, dim=0), \
                torch.stack(img_action_entropy, dim=0), torch.stack(img_action_log_probs, dim=0)
 
@@ -261,25 +313,36 @@ class POMDPModel:
             obs = []
             rew = []
             act = []
-            bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_hidden[0, :, :])     # b0
-            state = bv_dist.sample()                                                                # sample s0 based on b0
+            bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_hidden[0, :, :])                 # b0
+            state = bv_dist.sample()                                                                            # sample s0 based on b0
+            state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
 
             for h in range(horizon):
-                action_logit, action_prob, action_dist = self._actor(bv_prob)       # sample a_t by using actor model
+                action_logit, action_prob, action_dist = self._actor(bv_prob)                                   # sample a_t by using actor model
                 ac = action_dist.sample()
                 action = F.one_hot(ac, num_classes=self._action_shape[-1]).type(dtype=torch.float32).detach()
 
-                # tr_logit, tr_prob, tr_dist = self._transition_matrix(action)        # imagine (= transition)
-                # tr_sample = tr_dist.sample()
-                tr_prob, tr_dist = self._transition_matrix2(action)
-                tr_sample = tr_dist.sample()                                        # sample s_{t+1} based on q(s_{t+1}|s_t,a_t)
+                # 1-1. Use transition matrix network
+                # tr_logit, tr_prob, tr_dist = self._transition_matrix(action)                                    # imagine (= transition)
+                # tr_sample = tr_dist.sample()                                                                    # sample s_{t+1} based on q(s_{t+1}|s_t,a_t)
+                # state = torch.gather(tr_sample, dim=-1, index=state.unsqueeze(dim=-1)).squeeze(dim=-1)
+                # state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
+
+                # 1-2. Use transition matrix parameter
+                tr_prob, tr_dist = self._transition_matrix_parm(action)                                         # imagine (= transition)
+                tr_sample = tr_dist.sample()                                                                    # sample s_{t+1} based on q(s_{t+1}|s_t,a_t)
                 state = torch.gather(tr_sample, dim=-1, index=state.unsqueeze(dim=-1)).squeeze(dim=-1)
                 state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
 
-                ob_logit, ob_prob, ob_dist = self._observ_decoder(state_one_hot)    # sample o_{t+1} based on obs model
+                # 1-3. Use transition and multiply belief vector module
+                # state_prob, state_dist = self._transition_and_mul_bv(action.detach(), state_one_hot)
+                # state = state_dist.sample()
+                # state_one_hot = F.one_hot(state, num_classes=self._state_cat_size).type(torch.float32)
+
+                ob_logit, ob_prob, ob_dist = self._observ_decoder(state_one_hot)                                # sample o_{t+1} based on obs model
                 observ = F.one_hot(ob_dist.sample(), num_classes=self._observ_shape[-1]).type(torch.float32)
 
-                rnn_input = self._action_observ_to_rnn_input(action, observ)        # b_{t+1} = f(b_t, a_t, o_{t+1})
+                rnn_input = self._action_observ_to_rnn_input(action, observ)                                    # b_{t+1} = f(b_t, a_t, o_{t+1})
                 rnn_input = torch.unsqueeze(rnn_input, 0)
                 rnn_output, rnn_hidden = self._rnn(rnn_input, rnn_hidden)
                 bv_logit, bv_prob, bv_dist = self._rnn_hidden_to_belief_vector(rnn_hidden[0, :, :])
@@ -308,7 +371,7 @@ class POMDPModel:
             "BeliefVector": self._rnn_hidden_to_belief_vector.state_dict(),
             "RNNInput": self._action_observ_to_rnn_input.state_dict(),
             # "TransitionMatrix": self._transition_matrix.state_dict(),
-            "TransitionMatrix2": self._transition_matrix2.state_dict(),
+            # "TransitionMatrix2": self._transition_matrix_parm.state_dict(),
             "ObservDecoder": self._observ_decoder.state_dict(),
             "RewardModel": self._reward_model.state_dict(),
             "Actor": self._actor.state_dict(),
@@ -322,7 +385,7 @@ class POMDPModel:
         self._rnn_hidden_to_belief_vector.load_state_dict(saved_dict["BeliefVector"])
         self._action_observ_to_rnn_input.load_state_dict(saved_dict["RNNInput"])
         # self._transition_matrix.load_state_dict(saved_dict["TransitionMatrix"])
-        self._transition_matrix2.load_state_dict(saved_dict["TransitionMatrix2"])
+        # self._transition_matrix_parm.load_state_dict(saved_dict["TransitionMatrix2"])
         self._observ_decoder.load_state_dict(saved_dict["ObservDecoder"])
         self._reward_model.load_state_dict(saved_dict["RewardModel"])
         self._actor.load_state_dict(saved_dict["Actor"])
@@ -342,6 +405,7 @@ class BeliefVector(nn.Module):
         logit = self._model(rnn_hidden)
         prob = F.softmax(logit, dim=-1)
         dist = td.independent.Independent(td.categorical.Categorical(logits=logit), reinterpreted_batch_ndims=1)
+        # dist = td.categorical.Categorical(logits=logit)
         return logit, prob, dist
 
 
@@ -379,7 +443,7 @@ class TransitionMatrix(nn.Module):
         return logit, prob, dist
 
 
-class TransitionMatrix2(nn.Module):
+class TransitionMatrixParameter(nn.Module):
     def __init__(self, action_shape, state_cls_size, state_cat_size):
         super().__init__()
         action_size = int(action_shape[0])
@@ -406,6 +470,30 @@ class TransitionMatrix2(nn.Module):
         prob = torch.gather(input=tr_matrix, dim=3, index=action).squeeze(dim=3)
         if dim == 2:
             prob = prob.squeeze(dim=0)
+        dist = td.categorical.Categorical(probs=prob)
+        return prob, dist
+
+
+class Prior(nn.Module):
+    def __init__(self, action_shape, state_cls_size, state_cat_size):
+        super().__init__()
+        self._action_shape = action_shape
+        action_size = np.prod(action_shape)
+        self._state_cls_size = state_cls_size
+        self._state_cat_size = state_cat_size
+        belief_vector_shape = (state_cls_size, state_cat_size)
+        belief_vector_size = np.prod(belief_vector_shape)
+        input_size = int(action_size + belief_vector_size)
+        self._model = MLP(input_shape=(input_size,), output_shape=belief_vector_shape,
+                          num_hidden_layers=1, hidden_size=(action_size*state_cls_size*state_cat_size))
+
+    def forward(self, action, prev_belief_vector):
+        shp = action.shape[:-len(self._action_shape)]
+        action = torch.reshape(action, (*shp, -1))
+        prev_belief_vector = torch.reshape(prev_belief_vector, (*shp, -1))
+        x = torch.cat((action, prev_belief_vector), dim=-1)
+        y = self._model(x)
+        prob = F.softmax(y, dim=-1)
         dist = td.categorical.Categorical(probs=prob)
         return prob, dist
 
